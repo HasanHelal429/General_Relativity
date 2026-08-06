@@ -28,53 +28,61 @@ General_Relativity/Schwarzschild_Raytracer/media/                  # saved PNGs/
 
 Future GR-effects projects (e.g. a Kerr raytracer, gravitational-wave chirp modeling) would live as sibling folders under `General_Relativity/`, each with its own plan — not built now, just why the umbrella folder exists.
 
-## Phase 1 — Metric core (`metric.py`)
+## Phase 1 — Metric core (`metric.py`) ✅ done
 
 - `f(r, M=1)` — the Schwarzschild lapse-squared function `1 - 2*M/r`.
 - `r_horizon(M=1)`, `r_photon_sphere(M=1)` (`= 3*M`), `b_critical(M=1)` (`= 3*sqrt(3)*M`) — small closed-form helpers used everywhere downstream for validation and for the "did this ray fall in" cutoff.
 - Docstring derivation of the photon effective potential `V_eff(r) = f(r)/r**2` and why circular photon orbits only exist at `r = 3M` (max of `V_eff`, hence unstable) — this is what Phase 2's validation checks against.
+- **Validated**: `v_eff(r)` numerically maximized at `r=3.0` to 4 significant figures, and `1/sqrt(max(v_eff))` matches `b_critical()` to ~1e-8.
 
-## Phase 2 — Planar photon geodesic integrator (`geodesics.py`)
+## Phase 2 — Planar photon geodesic integrator (`geodesics.py`) ✅ done
 
 - The governing ODE, derived from the two photon conservation laws (`E`, `L`, with `b = L/E`) and standard for null geodesics in Schwarzschild: `d²u/dφ² = 3*M*u² - u`, where `u = 1/r`. Implemented as a first-order system `y = [u, du/dφ]` for `solve_ivp`.
-- `integrate_ray(r0, phi0, b, sign0, M=1, phi_max=50*pi)`: integrates from an initial `(r0, φ0)` and initial radial direction (`sign0 = ±1`, since `du/dφ` at the start is `±sqrt(1/b**2 - u0**2*f(u0))`), using `solve_ivp` with **terminal events**: `u` reaching `1/r_horizon` (ray captured) or `u` dropping to `~0` (ray escapes to infinity). Returns an outcome tag (`"horizon"` / `"escaped"`) plus the full `(u, φ)` trajectory (needed later for accretion-disk crossing checks) and, for escaped rays, the total accumulated `φ`.
-- `deflection_angle(b, M=1)`: for `b > b_crit`, integrate a scattering orbit from `r = ∞` and return `Δφ - π` (the bending angle).
-- **Validation** (done in `Geodesic Validation.ipynb`, not the module itself): (a) for `b >> b_crit`, `deflection_angle(b)` matches the weak-field formula `4*M/b` to a few %, tightening as `b` grows; (b) a ray launched at `b` just above `b_crit` orbits many times near `r=3M` before escaping (unstable photon sphere behavior), and `b` just below `b_crit` falls into the horizon — bracketing `b_crit` numerically should converge to `metric.b_critical()`; (c) spot-check that `b` computed from a trajectory's own `(u, du/dφ)` stays constant along the numerical path (conservation check on the integrator itself).
+- `integrate_ray(r0, phi0, b, sign0, M=1, phi_max=50*pi)`: integrates from an initial `(r0, φ0)` and initial radial direction (`sign0 = ±1`, since `du/dφ` at the start is `±sqrt(1/b**2 - u0**2*f(u0))`), using `solve_ivp` with **terminal events**: `u` reaching `1/r_horizon` (ray captured) or `u` dropping to `~0` (ray escapes to infinity). Returns an outcome tag (`"horizon"`/`"escaped"`/`"trapped"`) plus the full `(u, up, φ)` trajectory (`up` added beyond the original plan — needed for a clean conservation check without differentiating a non-uniform grid) and the total accumulated `φ`.
+- `deflection_angle(b, M=1, r0=1e6)`: integrates a scattering orbit from a large-but-finite `r0` (a stand-in for infinity) back out to `r0`, and returns `Δφ_total - baseline`.
+  - **Deviation from the original plan**: subtracting `π` (the `r0 -> ∞` baseline) instead of the *exact* finite-`r0` baseline `2*arccos(b/r0)` was numerically wrong — the finite-`r0` bias scales as `b/r0` while the true GR deflection scales as `M/b`, so for `b` not tiny compared to `r0` the bias overwhelmed the signal (confirmed empirically: the numeric/analytic ratio at `b=1000M`, `r0=1e6M` was 0.50, not ~1). Fixed by subtracting the exact finite-`r0` flat-space baseline instead of `π`; ratio then converges cleanly to 1.0 as `b` grows (0.9994 at `b=5000M`).
+- **Validated** in `Geodesic Validation.ipynb`: (a) numeric/analytic deflection ratio converges to 1.0 for `b >> b_crit` (1.0006 at `b=5000M`); (b) bisection on `b` for an inward-aimed ray converges to `b_crit` to ~1e-10 relative error; (c) impact parameter recovered from `(u, up)` stays constant to ~1e-7 relative error along an integrated trajectory; (d) an orbit diagram across `b_crit` visually confirms captured vs. escaped rays whirl near `r=3M` as expected, more tightly the closer `b` is to `b_crit`.
 
-## Phase 3 — Camera & ray-to-plane mapping (`camera.py`)
+## Phase 3 — Camera & ray-to-plane mapping (`camera.py`) ✅ done
 
-- `local_frame(r_cam, M=1)`: orthonormal tetrad for a static observer hovering at `r_cam` in Schwarzschild coordinates (accounts for the `sqrt(f(r))` redshift factor between coordinate and locally-measured quantities) — this is what makes pixel angles physically correct rather than just coordinate angles.
-- `pixel_directions(resolution, fov_deg)`: standard pinhole-camera unit vectors in the *local* frame for each pixel of an image plane.
-- `ray_setup(direction_local, r_cam, M=1)`: for a given local ray direction, compute (1) the impact parameter `b = r_cam * sin(psi) / sqrt(f(r_cam))` where `psi` is the angle from the outward radial direction, and (2) the initial in-plane radial sign, and (3) the 3D orbital-plane basis (`e1` = radial unit vector at the camera, `e2` = in-plane perpendicular vector) used to later rotate the 2D `(r, φ)` result from Phase 2 back into a 3D direction/position.
-- Ties directly into Phase 2: for each pixel, `ray_setup` produces exactly the `(b, sign0)` that `geodesics.integrate_ray` needs, plus the rotation basis to interpret the result in 3D.
+- **Deviation from the original plan**: no separate `local_frame`/tetrad function. The radial unit vector `e1 = position / |position|` is all that's needed — decomposing a ray direction into "radial component" + "orthogonal remainder" via plain dot/cross products in the flat R^3 embedding gives the same numbers as doing it explicitly against the local proper tetrad `(e_r, e_theta, e_phi)` (they coincide; see `camera.py`'s module docstring for why). This simplified `ray_setup` to not need `e_theta`/`e_phi` at all.
+- `camera_position(r_cam, theta_cam, phi_cam)`: camera position in the flat R^3 embedding, at *any* Schwarzschild `(r, theta, phi)` — not gauge-fixed to the equator, since the disk (Phase 4) fixes a preferred global equatorial plane, so a camera's polar angle relative to it is physically meaningful.
+- `camera_basis(position, up_hint)`: standard look-at `(forward, right, up)` basis, looking toward the origin.
+- `pixel_directions(resolution, fov_deg, forward, right, up)`: pinhole-camera unit ray direction per pixel.
+- `ray_setup(direction, position, M=1)`: impact parameter `b = r_cam*sin(psi)/sqrt(f(r_cam))`, initial radial sign, and orbital-plane basis `(e1, e2)`.
+- `plane_to_3d(r, phi, e1, e2)`: maps Phase 2's planar `(r, φ)` trajectory back into 3D.
+- **Validated**: basis orthogonality to float precision; central (near-radial) pixel gives `b≈0`; `plane_to_3d(r_cam, 0, e1, e2)` exactly reproduces the camera position; a 15-ray fan from a tilted camera, integrated through `geodesics.integrate_ray` and reconstructed via `plane_to_3d`, visually whirls near the photon sphere and correctly separates captured (red) vs. escaped (blue) — see `media/camera_ray_fan.png`.
 
-## Phase 4 — Scene model (`scene.py`)
+## Phase 4 — Scene model (`scene.py`) ✅ done
 
-- `celestial_sphere_color(direction)`: procedural equirectangular texture (lat/long checkerboard/grid, optionally a simple procedural starfield) sampled by a final escaped-ray 3D direction — chosen over a photographic texture first because a grid makes lensing distortion immediately legible; a real starfield/skybox image can be swapped in later without touching the raytracer.
-- `disk_color(r)`: thin equatorial accretion disk between `r_isco = 6*M` and a chosen `r_out`, colored by a simple non-relativistic temperature profile `T(r) ∝ r**(-3/4)` mapped through a matplotlib colormap (e.g. `inferno`) — flagged as an approximation; true Doppler/gravitational redshift coloring is called out as an optional Phase 6 stretch extension, not required for the core image.
-- `disk_crossing(trajectory_3d)`: given a ray's 3D path (reconstructed from Phase 2's in-plane trajectory via Phase 3's basis), find whether/where it crosses the global equatorial plane (`z=0`) within `[r_isco, r_out]`.
-- `horizon_color = black`.
+- `celestial_sphere_color(direction)`: procedural lat/lon checkerboard with hue set by longitude (a rainbow tint) — chosen over a plain grid because it makes lensing distortion (and which sky region maps where) immediately legible; a photographic skybox can be swapped in later without touching the raytracer.
+- `disk_color(r, r_isco=6M, r_out=20M)`: thin equatorial accretion disk colored by a non-relativistic `T(r) ~ r**(-3/4)` profile through the `inferno` colormap — flagged as an approximation; true Doppler/gravitational redshift coloring remains a possible future extension.
+- `disk_crossing(positions, r_isco, r_out)`: scans a ray's 3D trajectory in order for the first `z=0` crossing with radius in `[r_isco, r_out]`, linearly interpolating the exact crossing point.
+- `HORIZON_COLOR = black`.
+- **Validated**: the celestial texture's equirectangular unwrap and the disk colormap strip both look as intended (`media/celestial_sphere_texture.png`, `media/disk_temperature_profile.png`); `disk_crossing` correctly distinguishes a plane-crossing inside the disk annulus, one inside `r_isco` (correctly ignored), and no crossing at all.
 
-## Phase 5 — Render loop (`raytrace.py`)
+## Phase 5 — Render loop (`raytrace.py`) ✅ done
 
-- `render(resolution, r_cam, M=1, fov_deg=60, disk=True)`: MVP is a straightforward per-pixel Python loop wiring Phases 2-4 together (camera → integrate → classify hit → color), returning an RGB array. Built and correctness-checked first at a small preview resolution (e.g. 240×135).
-- **Performance pass** (only after the per-pixel version is verified correct): replace the per-pixel `solve_ivp` calls with a hand-written fixed-step vectorized RK4 that advances *all* pixels' `(u, du/dφ)` states together as `(N, 2)` numpy arrays, with per-ray early-exit masks for horizon/escape — this is what makes a full-resolution (e.g. 960×540+) render tractable in pure numpy without adding a new dependency. Cross-validated against the `solve_ivp` MVP on the preview resolution before trusting it at full res.
+- `render(resolution, r_cam, theta_cam, phi_cam, M=1, fov_deg=60, disk=True)`: per-pixel MVP wiring Phases 2-4 together. Correct, but ~11 ms/pixel (one `solve_ivp` call each) — a 240x135 preview would take minutes.
+- `render_fast(...)`: same signature, but replaces per-pixel `solve_ivp` with a hand-written fixed-step vectorized RK4 advancing every pixel's `(u, du/dφ)` state together as `(N,)` numpy arrays (disk-crossing checked incrementally, vectorized, each step). ~50x faster (0.17s vs. 9.4s for a 40x22 cross-check render); a 320x180 render takes ~10s.
+- **Deviation from the original plan**: `scene.disk_color` needed a fix for scalar radius input (matplotlib colormaps return a plain tuple, not an array, when called on a scalar) — added `np.atleast_1d`/unwrap handling.
+- **Validated**: `render_fast` cross-checked against `render` at a shared preview resolution — they agree everywhere except a thin band right at the photon-ring/shadow edge (`media/mvp_vs_fast_diff.png`), which is expected, not a bug: `r=3M` is an *unstable* photon orbit, so nearby trajectories there are supposed to diverge chaotically under any numerical perturbation.
 
-## Phase 6 — Validation & demo (`Schwarzschild_Raytracer.ipynb`)
+## Phase 6 — Validation & demo (`Schwarzschild_Raytracer.ipynb`) ✅ done
 
-- Renders the core "money shot": lensed grid-textured celestial sphere + black-hole shadow (should visually match the analytic shadow angular size from `b_crit`), then the same scene with the accretion disk added (showing the characteristic lensed/doubled disk image above and below the horizon).
-- A quantitative validation plot: numeric `deflection_angle(b)` vs. impact parameter, overlaid with the analytic weak-field asymptote `4M/b`, with the photon-sphere divergence at `b_crit` visible.
-- Optional stretch (only if time permits, not required for the project to be "done"): an orbiting-camera flythrough animation exported to `media/`, and/or relativistic Doppler+gravitational redshift coloring of the disk instead of the flat temperature-profile approximation.
+- Rendered the core "money shot": lensed grid-textured celestial sphere + shadow with no disk (`media/render_lensing_only.png`) — measured shadow angular radius matches the analytic `arcsin(b_crit*sqrt(f(r_cam))/r_cam)` prediction to within one pixel (ratio 1.000); then the full scene with the accretion disk added (`media/render_with_disk.png`), showing the characteristic lensed/warped disk arc above the shadow in addition to the near side below.
+- Quantitative validation plot: full `deflection_angle(b)` curve down to `b` just above `b_crit`, showing the expected logarithmic divergence (`media/deflection_full_curve.png`).
+- Stretch goal completed: a 20-frame orbiting-camera flythrough animation (`media/orbit_flythrough.gif`). Relativistic Doppler/redshift disk coloring was not done (flagged in Phase 4 as a possible future extension, not required here).
 - All representative renders/plots saved to `media/`.
 
 ## Progress
 
-- [ ] Phase 1 — `metric.py`
-- [ ] Phase 2 — `geodesics.py` + `Geodesic Validation.ipynb`
-- [ ] Phase 3 — `camera.py`
-- [ ] Phase 4 — `scene.py`
-- [ ] Phase 5 — `raytrace.py` (correctness pass, then vectorized performance pass)
-- [ ] Phase 6 — `Schwarzschild_Raytracer.ipynb` + `media/`
+- [x] Phase 1 — `metric.py`
+- [x] Phase 2 — `geodesics.py` + `Geodesic Validation.ipynb`
+- [x] Phase 3 — `camera.py`
+- [x] Phase 4 — `scene.py`
+- [x] Phase 5 — `raytrace.py` (correctness pass, then vectorized performance pass)
+- [x] Phase 6 — `Schwarzschild_Raytracer.ipynb` + `media/`
 
 ## Verification
 

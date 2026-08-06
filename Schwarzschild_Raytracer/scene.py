@@ -58,12 +58,16 @@ def disk_color(r, r_isco=R_ISCO_DEFAULT, r_out=R_OUT_DEFAULT, cmap_name="inferno
     at r_out. `r` may be an array; returns an array (..., 3) of RGB colors.
     """
     r = np.asarray(r, dtype=float)
+    scalar_input = r.ndim == 0
+    r = np.atleast_1d(r)
+
     temperature = r ** (-0.75)
     t_in = r_isco ** (-0.75)
     t_out = r_out ** (-0.75)
     t_norm = np.clip((temperature - t_out) / (t_in - t_out), 0.0, 1.0)
     cmap = colormaps[cmap_name]
-    return cmap(t_norm)[..., :3]
+    rgb = cmap(t_norm)[..., :3]
+    return rgb[0] if scalar_input else rgb
 
 
 def disk_crossing(positions, r_isco=R_ISCO_DEFAULT, r_out=R_OUT_DEFAULT):
